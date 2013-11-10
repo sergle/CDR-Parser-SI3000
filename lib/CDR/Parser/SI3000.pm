@@ -7,9 +7,9 @@ use IO::File ();
 
 =head1 NAME
 
-CDR::Parser::SI3000 - parser for binary CDR files (*.ama) produced by Iskratel SI3000 MSCN product
+CDR::Parser::SI3000 - parser for binary CDR files (*.ama) produced by Iskratel SI3000 MSCN telephony product
 
-CDR = Call Detail/Data Records
+CDR = Call Detail Records
 
 =head1 VERSION
 
@@ -31,9 +31,9 @@ Usage example
 
     my ($cdr_list, $num_failed) = CDR::Parser::SI3000->parse_file('somefile.ama');
 
-There 
+There
     $cdr_list is a array-reference containing individual records as hash-ref.
-    $num_failed is a number of unparseable records 
+    $num_failed is a number of unparseable records
 
 
 =head1 SUBROUTINES/METHODS
@@ -60,7 +60,7 @@ sub parse_file {
     my($class, $filename) = @_;
     die "No filename argument" if(! $filename);
     _log('Parsing file %s', $filename);
-    
+
     my $fh = IO::File->new($filename) || die "Failed to open $filename - $!";
     binmode($fh, ':bytes');
 
@@ -79,7 +79,7 @@ sub parse_file {
             $failed++;
         }
     }
-    
+
     $fh->close;
 
     return (\@records, $failed);
@@ -290,7 +290,7 @@ sub block_121 {
         2  => 'public network serving the local user',
         3  => 'transit network',
         4  => 'public network serving the remote user',
-        5  => 'private network serving the remote user', 
+        5  => 'private network serving the remote user',
         7  => 'international network',
         10 => 'network beyond interworking point',
     );
@@ -306,7 +306,7 @@ sub block_121 {
     $call->{call_coding_standard} = $coding_label{ $coding } // 'UNKNOWN';
     $call->{call_location} = $location_label{ $location } // 'UNKNOWN';
 }
-# 122. CBNO (Charge Band Number) 
+# 122. CBNO (Charge Band Number)
 # 123. Common call ID
 # 124. Durations before answer
 # 125. VoIP Info (old)
@@ -375,9 +375,9 @@ sub block_128 {
          9   => 'G711Ulaw64k',
          66  => 'G728',
          67  => 'G729',
-         68  => 'G729annexA', 
-         70  => 'G729wAnnexB', 
-         71  => 'G729AnnexAwAnnexB', 
+         68  => 'G729annexA',
+         70  => 'G729wAnnexB',
+         71  => 'G729AnnexAwAnnexB',
          72  => 'GsmFullRate',
          80  => 'G7231A5_3k',
          81  => 'G7231A6_3k',
@@ -401,7 +401,7 @@ sub block_128 {
     my $call_side = ($flag & 0x80) >> 7;
     my $call_type = $flag & 0x7F;
     _log("  Call side: %d / %s", $call_side, $side_label{ $call_side } // 'UNKNOWN');
-    _log("  VoIP call type: %d / %s", $call_type, $type_label{ $call_type } // 'UNKNOWN'); 
+    _log("  VoIP call type: %d / %s", $call_type, $type_label{ $call_type } // 'UNKNOWN');
 
     $call->{voip_rx_codec} = $codec_label{ $rx_codec } // 'UNKNOWN';
     $call->{voip_tx_codec} = $codec_label{ $tx_codec } // 'UNKNOWN';
@@ -492,7 +492,7 @@ sub parse_record {
     my $type_id;
     sysread($fh, $type_id, 1) || return 0;
     my $code = unpack('H2', $type_id);
-    
+
     # Recort type:
     #  d2 -- Record at date and time changes (parsed but ignored)
     #  d3 -- Record of the loss of a certain amount of records (NOT SUPPORTED)
@@ -514,7 +514,7 @@ sub parse_record {
     #  1 - c8
     #  2 - record length
     #  4 - record index (in file?)
-    #  4 - call identifier (sequentially incremented number, unique - 
+    #  4 - call identifier (sequentially incremented number, unique -
     #                       but incomplete calls can have call-id repeated again in later file)
     #  3 - flags
     #  1 - Sequence (4bits) / Charge status (4bits)
@@ -542,7 +542,7 @@ sub parse_record {
     $call{flags} = $flags;
     $call{record_sequence} = (($seq & 0xF0) >> 4);
     $call{charge_status} = ($seq & 0x0F);
-    
+
     my($area_len) = ($area & 0xE0) >> 5;
     my($subscriber_len) = ($area & 0x1F);
     #my($subscriber_len) = ($area & 0x07);
@@ -557,7 +557,6 @@ sub parse_record {
     if($area_len) {
         ($area_code,$variable) = unpack("H[$area_len] a*", $variable);
         _log('  Aread: %s', $area_code);
-        #die;
     }
 
     my $cli_len = $subscriber_len;
@@ -572,7 +571,7 @@ sub parse_record {
     _log("  CLI: %s", $cli);
     $call{cli_area} = $area_code;
     $call{cli} = $cli;
-    
+
     # dynamic part:
     my $block_marker;
     while( length($variable) > 0) {
@@ -596,7 +595,7 @@ sub parse_time_change_record {
     my ($fh, $code) = @_;
 
     _log('Found Date Time Change marker %s', $code);
-    
+
     my $data;
     # 7 - old date and time
     # 7 - new date and time
@@ -607,15 +606,15 @@ sub parse_time_change_record {
     $year += 2000;
     my $dtime = sprintf "%04d-%02d-%02d %02d:%02d:%02d.%02d", $year,$month,$day,$hour,$min,$sec,$msec;
     _log('  Old Time: %s', $dtime);
-    
+
     ($year,$month,$day,$hour,$min,$sec,$msec,$reason) = unpack('CCCCCCC C', $data);
     $year += 2000;
     $dtime = sprintf "%04d-%02d-%02d %02d:%02d:%02d.%02d", $year,$month,$day,$hour,$min,$sec,$msec;
     _log('  New Time: %s', $dtime);
-    
+
     # 1 - The real-time clock correction
     # 2 - Summer / winter time changes
-    _log('  Change reason: %s', $reason); 
+    _log('  Change reason: %s', $reason);
 }
 
 1;
@@ -626,6 +625,8 @@ sub parse_time_change_record {
 Sergey Leschenko, C<< <sergle.ua at gmail.com> >>
 
 =head1 BUGS
+
+Please note that some blocks are not implemented, as I haven't seen them in real data files.
 
 Please report any bugs or feature requests to C<bug-cdr-parser-si3000 at rt.cpan.org>, or through
 the web interface at L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=CDR-Parser-SI3000>.  I will be notified, and then you'll
