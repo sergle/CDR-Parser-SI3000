@@ -1,5 +1,6 @@
 package CDR::Parser::SI3000;
 
+use 5.10.0;
 use strict;
 use warnings FATAL => 'all';
 use Data::Dumper;
@@ -503,6 +504,10 @@ sub parse_record {
         # next
         return parse_record($fh);
     }
+    elsif($code eq 'd4') {
+        parse_reboot_record($fh, $code);
+        return parse_record($fh);
+    }
     elsif($code ne 'c8') {
         die "Unknown record type: $code";
     }
@@ -615,6 +620,25 @@ sub parse_time_change_record {
     # 1 - The real-time clock correction
     # 2 - Summer / winter time changes
     _log('  Change reason: %s', $reason);
+}
+
+# d4 - System was rebooted
+sub parse_reboot_record {
+    my ($fh, $code) = @_;
+    _log('Found Restart marker %s', $code);
+
+    my $data;
+    # 7 - restart date and time
+    # 4 - reserved
+    sysread($fh, $data, 7) || die $!;
+    my($year,$month,$day,$hour,$min,$sec,$msec);
+    ($year,$month,$day,$hour,$min,$sec,$msec) = unpack('CCCCCCC', $data);
+    $year += 2000;
+    my $reboot_time = sprintf "%04d-%02d-%02d %02d:%02d:%02d.%02d", $year,$month,$day,$hour,$min,$sec,$msec;
+    _log('  Restart time: %s', $reboot_time);
+
+    # ignored...
+    sysread($fh, $data, 4) || die $!;
 }
 
 1;
