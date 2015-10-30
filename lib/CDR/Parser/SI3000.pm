@@ -3,7 +3,6 @@ package CDR::Parser::SI3000;
 use 5.10.0;
 use strict;
 use warnings FATAL => 'all';
-use Data::Dumper;
 use IO::File ();
 
 =head1 NAME
@@ -18,7 +17,7 @@ Version 0.01
 
 =cut
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 our $VERBOSE = 0;
 
@@ -157,7 +156,9 @@ sub block_105 {
     _log("  Bearer: %d / %s", $bearer, $bearer_label{ $bearer } // 'UNKNOWN');
     _log("  Service: %d / %s", $service, $service_label{ $service } // 'UNKNOWN');
     $call->{bearer} = $bearer_label{ $bearer } // 'UNKNOWN';
+    $call->{bearer_code} = $bearer;
     $call->{service} = $service_label{ $service } // 'UNKNOWN';
+    $call->{service_code} = $service;
 }
 # 106. Supplementary service used by calling subscriber
 sub block_106 {
@@ -305,7 +306,9 @@ sub block_121 {
     $call->{call_release_cause} = $cause_label{ $cause } // 'UNKNOWN';
     $call->{call_release_cause_code} = $cause;
     $call->{call_coding_standard} = $coding_label{ $coding } // 'UNKNOWN';
+    $call->{call_coding_standard_code} = $coding;
     $call->{call_location} = $location_label{ $location } // 'UNKNOWN';
+    $call->{call_location_code} = $location;
 }
 # 122. CBNO (Charge Band Number)
 # 123. Common call ID
@@ -405,14 +408,18 @@ sub block_128 {
     _log("  VoIP call type: %d / %s", $call_type, $type_label{ $call_type } // 'UNKNOWN');
 
     $call->{voip_rx_codec} = $codec_label{ $rx_codec } // 'UNKNOWN';
+    $call->{voip_rx_codec_code} = $rx_codec;
     $call->{voip_tx_codec} = $codec_label{ $tx_codec } // 'UNKNOWN';
+    $call->{voip_tx_codec_code} = $tx_codec;
     $call->{voip_rx_packetization} = $rx_period;
     $call->{voip_tx_packetization} = $tx_period;
     $call->{voip_rx_bandwidth} = $rx_bandwidth;
     $call->{voip_tx_bandwidth} = $tx_bandwidth;
     $call->{voip_max_jitter} = $max_jitter;
-    $call->{voip_call_size} = $side_label{ $call_side } // 'UNKNOWN';
+    $call->{voip_call_side} = $side_label{ $call_side } // 'UNKNOWN';
+    $call->{voip_call_side_code} = $call_side;
     $call->{voip_call_type} = $type_label{ $call_type } // 'UNKNOWN';
+    $call->{voip_call_type_code} = $call_type;
 }
 # 129. Amount of transferred data
 sub block_129 {
@@ -496,15 +503,21 @@ sub parse_record {
 
     # Recort type:
     #  d2 -- Record at date and time changes (parsed but ignored)
-    #  d3 -- Record of the loss of a certain amount of records (NOT SUPPORTED)
-    #  d4 -- Restart record (NOT SUPPORTED)
+    #  d3 -- Record of the loss of a certain amount of records
+    #  d4 -- Restart record
     #  c8 -- Call record
     if($code eq 'd2') {
+        # record of date and time changes
         parse_time_change_record($fh, $code);
-        # next
+        return parse_record($fh);
+    }
+    elsif($code eq 'd3'){
+        # record of the loss of a certain amount of records
+        parse_loss_record($fh, $code);
         return parse_record($fh);
     }
     elsif($code eq 'd4') {
+        # restart/reboot
         parse_reboot_record($fh, $code);
         return parse_record($fh);
     }
@@ -550,6 +563,8 @@ sub parse_record {
 
     my($area_len) = ($area & 0xE0) >> 5;
     my($subscriber_len) = ($area & 0x1F);
+    _log("  Area code length: %d", $area_len);
+    _log("  Subscriber num len: %d", $subscriber_len);
     #my($subscriber_len) = ($area & 0x07);
     #printf "Area/Subscriber: %s / %d . %d\n", $area, $area_len, $subscriber_len;
     #printf "  Area code length: %d\n", $area_len;
@@ -558,23 +573,17 @@ sub parse_record {
     #printf "---- Variable data (%d) ----\n", length($variable);
     #print unpack('H*', $variable), "\n";
 
-    my $area_code = '';
-    if($area_len) {
-        ($area_code,$variable) = unpack("H[$area_len] a*", $variable);
-        _log('  Aread: %s', $area_code);
-    }
-
-    my $cli_len = $subscriber_len;
-    if($subscriber_len % 2 == 1) {
+    my $cli_len = $area_len + $subscriber_len;
+    if($cli_len % 2 == 1) {
+        # padding, each octet for cli contains 2 digits
         $cli_len++;
     }
     my $cli;
     ($cli, $variable) = unpack("H$cli_len a*", $variable);
-    if($cli_len > $subscriber_len) {
+    if($cli_len > ($area_len + $subscriber_len)) {
         $cli = substr($cli, 0, -1);
     }
     _log("  CLI: %s", $cli);
-    $call{cli_area} = $area_code;
     $call{cli} = $cli;
 
     # dynamic part:
@@ -620,6 +629,31 @@ sub parse_time_change_record {
     # 1 - The real-time clock correction
     # 2 - Summer / winter time changes
     _log('  Change reason: %s', $reason);
+}
+
+# d3 - loss record
+sub parse_loss_record {
+    my ($fh, $code) = @_;
+
+    _log('Found Loss marker %s', $code);
+
+    my $data;
+    # 7 - start date and time
+    # 7 - end date and time
+    # 4 - number of records lost
+    sysread($fh, $data, 18) || die $!;
+    my($year,$month,$day,$hour,$min,$sec,$msec,$amount);
+    ($year,$month,$day,$hour,$min,$sec,$msec,$data) = unpack('CCCCCCC a*', $data);
+    $year += 2000;
+    my $dtime = sprintf "%04d-%02d-%02d %02d:%02d:%02d.%02d", $year,$month,$day,$hour,$min,$sec,$msec;
+    _log('  Start Time: %s', $dtime);
+
+    ($year,$month,$day,$hour,$min,$sec,$msec,$amount) = unpack('CCCCCCC L', $data);
+    $year += 2000;
+    $dtime = sprintf "%04d-%02d-%02d %02d:%02d:%02d.%02d", $year,$month,$day,$hour,$min,$sec,$msec;
+    _log('  End Time: %s', $dtime);
+
+    _log('  Amount of record loss: %s', $amount);
 }
 
 # d4 - System was rebooted
